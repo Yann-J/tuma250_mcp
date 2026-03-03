@@ -1,6 +1,6 @@
 [project]
 name = "tuma250-mcp"
-version = "0.1.5"
+version = "0.1.6"
 description = "MCP server for the Tuma250 grocery site (Kigali, Rwanda)"
 authors = [{ name = "Yann Jouanique", email = "yann.jouanique@gmail.com" }]
 readme = "README.md"
