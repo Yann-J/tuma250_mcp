@@ -116,7 +116,6 @@ npx mcporter call --stdio "uv run tuma250-mcp" get_cart
 npx mcporter call --stdio "uv run tuma250-mcp" 'tuma250.get_order_details(order_id: "193457")'
 npx mcporter call --stdio "uv run tuma250-mcp" 'tuma250.add_to_cart(product_slug: "ripe-mango-fruit-1kg")'
 npx mcporter call --stdio "uv run tuma250-mcp" add_to_cart --args '{"product_slug": "viande-hachee-de-bouef-ordinaire-regular-ground-beef", "variation_attributes": {"attribute_weight":"1kg"}}'
-
 ```
 
 ## License

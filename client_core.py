@@ -358,7 +358,13 @@ class Tuma250Client:
             "shipping_options": cart.get("shipping_options", []),
             "total": cart.get("total"),
             "line_item_summary": [
-                {"id": i["product_id"], "name": i["name"], "qty": i["qty"]}
+                {
+                    "id": i["product_id"],
+                    "slug": i.get("slug"),
+                    "variation_attributes": i.get("variation_attributes"),
+                    "name": i["name"],
+                    "qty": i["qty"],
+                }
                 for i in cart.get("items", [])
             ],
         }

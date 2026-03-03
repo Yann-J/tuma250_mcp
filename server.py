@@ -137,7 +137,8 @@ async def add_to_cart(
             - success (bool): Whether the item was confirmed in the cart.
             - cart_total_items (int): Total number of line items in the cart.
             - cart_total_price (float | None): Cart grand total.
-            - line_item_summary (list): Each item with id, name, qty.
+            - line_item_summary (list): Each item with id, slug,
+              variation_attributes, name, qty.
     """
     async with Tuma250Client() as client:
         return await client.add_to_cart(
