@@ -4,6 +4,8 @@ An [MCP](https://modelcontextprotocol.io) server for the [Tuma 250](https://tuma
 
 Gives any MCP-compatible AI client (Cursor, Claude Desktop, etc.) the ability to search products, manage a shopping cart, and browse order history on Tuma250 — using a headless Playwright browser under the hood.
 
+![Tuma250 MCP diagram](docs/tuma-mcp.png)
+
 ## Tools
 
 | Tool | Description |
