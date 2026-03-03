@@ -4,7 +4,17 @@ An [MCP](https://modelcontextprotocol.io) server for the [Tuma 250](https://tuma
 
 Gives any MCP-compatible AI client (Cursor, Claude Desktop, etc.) the ability to search products, manage a shopping cart, and browse order history on Tuma250 — using a headless Playwright browser under the hood.
 
+## Example uses
+
+### Imported as MCP server in Perplexity (or any other MCP-compatible client)
+
 ![Tuma250 MCP diagram](docs/tuma-mcp.png)
+
+### Imported as a skill in [OpenClaw](https://openclaw.ai/)
+
+The skill definition can be copied from [`skills/tuma250/SKILL.md`](skills/tuma250/SKILL.md) (requires the `mcporter` skill to be enabled, and the MCP server added to its configuration)
+
+![Tuma250 Skill](docs/tuma-skill.png)
 
 ## Tools
 

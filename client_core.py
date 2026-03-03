@@ -48,6 +48,7 @@ URLS: dict[str, str] = {
     "order_detail": "/my-account/view-order/{order_id}/",
     "search": "/?s={query}&post_type=product",
     "product": "/product/{slug}/",
+    "product_by_id": "/?p={id}",  # WordPress short link, redirects to canonical product URL
 }
 
 SELECTORS: dict[str, str] = {
@@ -308,13 +309,17 @@ class Tuma250Client:
         """
         await self.ensure_logged_in()
 
-        # Resolve slug → numeric WooCommerce product ID. Memory stores slugs.
+        # Resolve slug → numeric WooCommerce product ID when needed.
+        # Memory stores numeric IDs from get_order_details; slugs need resolution.
         numeric_product_id = await self._resolve_slug_to_product_id(product_id)
 
         # Auto-resolve variation_id from the product page when only
         # variation_attributes are known (e.g. from stored preferences).
         if variation_attributes and not variation_id:
-            product_url = self._url("product", slug=product_id)
+            if product_id.isdigit():
+                product_url = self._url("product_by_id", id=product_id)
+            else:
+                product_url = self._url("product", slug=product_id)
             variations = await self.get_product_variations(product_url)
             for v in variations:
                 raw_attrs = v.get("raw_attributes", {})

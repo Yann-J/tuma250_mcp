@@ -420,6 +420,12 @@ async def test_get_order_details_returns_items() -> None:
 
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch.object(
+            client,
+            "_resolve_slug_to_product_id",
+            new_callable=AsyncMock,
+            side_effect=lambda x: x if x.isdigit() else "194006",
+        ),
         patch(
             "tuma250_mcp.client_core.parse_order_detail_item",
             new_callable=AsyncMock,
@@ -431,3 +437,5 @@ async def test_get_order_details_returns_items() -> None:
     assert result["order_id"] == "order-123"
     assert len(result["items"]) == 2
     assert result["items"][0]["name"] == "Rice"
+    # Slugs are resolved to numeric IDs
+    assert result["items"][0]["product_id"] == "194006"
