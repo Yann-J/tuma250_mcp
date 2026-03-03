@@ -1,6 +1,6 @@
 [project]
 name = "tuma250-mcp"
-version = "0.1.3"
+version = "0.1.4"
 description = "MCP server for the Tuma250 grocery site (Kigali, Rwanda)"
 authors = [{ name = "Yann Jouanique", email = "yann.jouanique@gmail.com" }]
 readme = "README.md"
@@ -29,9 +29,9 @@ dependencies = [
 dev = ["pytest", "pytest-asyncio"]
 
 [project.urls]
-Homepage = "https://github.com/yannjouanique/tuma250_mcp"
-Repository = "https://github.com/yannjouanique/tuma250_mcp"
-"Bug Tracker" = "https://github.com/yannjouanique/tuma250_mcp/issues"
+Homepage = "https://github.com/Yann-J/tuma250_mcp"
+Repository = "https://github.com/Yann-J/tuma250_mcp"
+"Bug Tracker" = "https://github.com/Yann-J/tuma250_mcp/issues"
 
 [project.scripts]
 tuma250-mcp = "tuma250_mcp.server:main"
