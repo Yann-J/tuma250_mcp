@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v
 
+      - name: Patch README links for PyPI
+        run: uvx mdremotifier -i README.md -o README.md --url-prefix "https://github.com/Yann-J/tuma250_mcp/main/" --img-url-prefix "https://raw.githubusercontent.com/Yann-J/tuma250_mcp/main/"
+
       - name: Build
         run: uv build
 
