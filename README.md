@@ -1,6 +1,6 @@
 # tuma250-mcp
 
-An [MCP](https://modelcontextprotocol.io) server for the [Tuma 250](https://tuma250.com) WooCommerce grocery site (Kigali, Rwanda).
+An [MCP](https://modelcontextprotocol.io) server for the [Tuma 250](https://tuma250.com) grocery site (Kigali, Rwanda).
 
 Gives any MCP-compatible AI client (Cursor, Claude Desktop, etc.) the ability to search products, manage a shopping cart, and browse order history on Tuma250 — using a headless Playwright browser under the hood.
 
@@ -16,10 +16,12 @@ Gives any MCP-compatible AI client (Cursor, Claude Desktop, etc.) the ability to
 | `list_recent_orders` | List recent orders from My Account |
 | `get_order_details` | Fetch line items for a specific order |
 
-## Installation
+## Prerequisites
+
+### Playwright with one headless browser
 
 ```bash
-pip install tuma250-mcp
+npm i -g playwright
 playwright install chromium
 ```
 
@@ -62,6 +64,7 @@ Add to `~/.cursor/mcp.json` / `~/Library/Application Support/Claude/claude_deskt
 ### Direct (stdio)
 
 ```bash
+pip install tuma250-mcp
 TUMA250_USERNAME=you@example.com TUMA250_PASSWORD=secret tuma250-mcp
 ```
 
@@ -78,6 +81,21 @@ Some products on Tuma250 require a size/weight selection before they can be adde
 2. get_product_variations(product_url)       → lists 250g / 500g / 1kg variants
 3. add_to_cart(product_id, variation_id, variation_attributes)
 ```
+
+## Development
+
+```bash
+# Clone and setup
+uv venv
+source .venv/bin/activate   # or: .venv\Scripts\activate on Windows
+uv pip install -e ".[dev]"
+playwright install chromium
+
+# Run tests
+pytest -v
+```
+
+Copy `config-example.env` to `.env` and fill in your Tuma250 credentials before running tests or the server locally.
 
 ## License
 

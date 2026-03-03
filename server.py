@@ -2,7 +2,7 @@
 Tuma250 MCP server — entrypoint.
 
 Run via stdio (default for Cursor / LangGraph integration):
-    python -m tuma250_mcp.server
+    python -m server
 
 The server exposes 6 tools under the "tuma250" namespace:
     - login
@@ -222,6 +222,7 @@ async def get_order_details(order_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Entry point for the tuma250-mcp console script."""
