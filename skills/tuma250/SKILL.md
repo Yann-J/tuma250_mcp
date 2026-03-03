@@ -65,3 +65,13 @@ Usually you don’t need to do anything: tools auto-login as needed.
 If you want to force it:
 
 - `mcporter call tuma250.login()`
+
+## Troubleshooting
+
+### If `mcporter` is not installed
+
+It can be invoked via npx using `npx mcporter`
+
+### If the `tuma250-mcp` MCP server is not defined in mcporter configuration
+
+It can be defined inline in the mcporter CLI using e.g. `mcporter call --stdio "uvx tuma250-mcp" get_cart`

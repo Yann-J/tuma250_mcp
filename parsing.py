@@ -184,6 +184,8 @@ async def parse_order_row(row: ElementHandle) -> dict[str, Any]:
 
     # Standard WooCommerce My Account orders table column classes
     order_id = await text(".woocommerce-orders-table__cell-order-number a")
+    order_id = order_id.lstrip("#").strip() if order_id else None
+
     date = await text(".woocommerce-orders-table__cell-order-date")
     status = await text(".woocommerce-orders-table__cell-order-status")
     total_raw = await text(

@@ -162,9 +162,7 @@ class Tuma250Client:
                 "Product page missing product_id (input[name='product_id'] or "
                 "button[name='add-to-cart'] value). Ensure the page has fully loaded."
             )
-        var_el = await self.page.query_selector(
-            SELECTORS["product_page_variation_id"]
-        )
+        var_el = await self.page.query_selector(SELECTORS["product_page_variation_id"])
         variation_id: str | None = None
         if var_el:
             raw = await var_el.get_attribute("value")
@@ -312,9 +310,7 @@ class Tuma250Client:
         # Build product URL; variation_attributes in query string pre-select the variant
         product_url = self._url("product", slug=product_slug)
         if variation_attributes:
-            qs = "&".join(
-                f"{k}={v}" for k, v in variation_attributes.items()
-            )
+            qs = "&".join(f"{k}={v}" for k, v in variation_attributes.items())
             product_url = f"{product_url}?{qs}"
 
         logger.info(
@@ -347,9 +343,7 @@ class Tuma250Client:
         cart = await self.get_cart()
         item_ids = [item["product_id"] for item in cart.get("items", [])]
         target_id = variation_id or product_id
-        success = (
-            str(target_id) in item_ids or str(product_id) in item_ids
-        )
+        success = str(target_id) in item_ids or str(product_id) in item_ids
 
         return {
             "success": success,
