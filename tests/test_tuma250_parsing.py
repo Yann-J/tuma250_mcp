@@ -111,6 +111,7 @@ async def test_parse_product_card_extracts_all_fields() -> None:
     result = await parse_product_card(card)
 
     assert result["id"] == "194006"
+    assert result["slug"] == "imperial-leather-jasmine-rice-bathing-soap-150g"
     assert result["name"] == "Imperial Leather Jasmine & Rice Bathing Soap 150g"
     assert result["price"] == 1500.0
     assert (
@@ -157,7 +158,10 @@ async def test_parse_cart_item_defaults_qty_to_1_when_missing() -> None:
         if selector == "[data-product_id]":
             return _mock_element(attr_value="p1")
         if selector == ".product-name a":
-            return _mock_element(text_value="Rice 1kg")
+            return _mock_element(
+                text_value="Rice 1kg",
+                attr_value="https://tuma250.com/product/rice-1kg/",
+            )
         if selector == "input.qty":
             return None  # qty input absent
         if selector == ".product-price .woocommerce-Price-amount":
@@ -172,7 +176,40 @@ async def test_parse_cart_item_defaults_qty_to_1_when_missing() -> None:
 
     assert result["qty"] == 1
     assert result["product_id"] == "p1"
+    assert result["slug"] == "rice-1kg"
+    assert result["variation_attributes"] is None
     assert result["price"] == 1500.0
+
+
+@pytest.mark.asyncio
+async def test_parse_cart_item_extracts_slug_and_variation_from_link() -> None:
+    """parse_cart_item derives slug and variation_attributes from product link URL."""
+    row = AsyncMock()
+
+    async def query_selector(selector: str) -> AsyncMock | None:
+        if selector == "[data-product_id]":
+            return _mock_element(attr_value="54913")
+        if selector == ".product-name a":
+            return _mock_element(
+                text_value="Fresh Carrots 500g",
+                attr_value="https://tuma250.com/product/fresh-carrots-1kg/?attribute_quantity=500g",
+            )
+        if selector == "input.qty":
+            return _mock_element(attr_value="2")
+        if selector == ".product-price .woocommerce-Price-amount":
+            return _mock_element(text_value="RWF\xa0800")
+        if selector == ".product-subtotal .woocommerce-Price-amount":
+            return _mock_element(text_value="RWF\xa01,600")
+        return None
+
+    row.query_selector = query_selector
+
+    result = await parse_cart_item(row)
+
+    assert result["product_id"] == "54913"
+    assert result["slug"] == "fresh-carrots-1kg"
+    assert result["variation_attributes"] == {"attribute_quantity": "500g"}
+    assert result["qty"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +255,8 @@ async def test_parse_order_row_parses_total() -> None:
 
 
 @pytest.mark.asyncio
-async def test_parse_order_detail_item_derives_product_id_from_url() -> None:
-    """parse_order_detail_item derives product_id from the product URL slug."""
+async def test_parse_order_detail_item_derives_slug_from_url() -> None:
+    """parse_order_detail_item derives slug from the product URL."""
     row = AsyncMock()
 
     async def query_selector(selector: str) -> AsyncMock | None:
@@ -238,7 +275,7 @@ async def test_parse_order_detail_item_derives_product_id_from_url() -> None:
 
     result = await parse_order_detail_item(row)
 
-    assert result["product_id"] == "rice-basmati-5kg"
+    assert result["slug"] == "rice-basmati-5kg"
     assert result["name"] == "Rice Basmati 5kg"
     assert result["qty"] == 2
     assert result["price"] == 30000.0

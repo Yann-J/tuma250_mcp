@@ -56,6 +56,7 @@ async def parse_product_card(card: ElementHandle) -> dict[str, Any]:
     Returns:
         dict[str, Any]: Parsed product fields. Missing fields default to None.
     """
+
     async def text(selector: str) -> str | None:
         el = await card.query_selector(selector)
         return (await el.inner_text()).strip() if el else None
@@ -80,11 +81,18 @@ async def parse_product_card(card: ElementHandle) -> dict[str, Any]:
     # It can be derived from the product URL path or product page if needed
     category: str | None = None
 
+    # Slug for add_to_cart (last path segment of product URL)
+    slug: str | None = None
+    if url:
+        parts = [p for p in url.rstrip("/").split("/") if p]
+        slug = parts[-1] if parts else None
+
     return {
         "id": product_id,
+        "slug": slug,
         "name": name,
-        "brand": None,       # Not exposed on the card; available on the product page
-        "package_size": None, # Not exposed on the card; parse from name if needed
+        "brand": None,  # Not exposed on the card; available on the product page
+        "package_size": None,  # Not exposed on the card; parse from name if needed
         "unit": None,
         "price": _parse_price(price_raw),
         "url": url,
@@ -104,6 +112,7 @@ async def parse_cart_item(row: ElementHandle) -> dict[str, Any]:
     Returns:
         dict[str, Any]: Cart item fields.
     """
+
     async def text(selector: str) -> str | None:
         el = await row.query_selector(selector)
         return (await el.inner_text()).strip() if el else None
@@ -115,8 +124,21 @@ async def parse_cart_item(row: ElementHandle) -> dict[str, Any]:
     # Product ID on the remove button or quantity input
     product_id = await attr("[data-product_id]", "data-product_id")
 
-    # Product name link
+    # Product name and link (for slug + variation_attributes)
     name = await text(".product-name a")
+    product_link = await attr(".product-name a", "href")
+
+    slug: str | None = None
+    variation_attributes: dict[str, str] = {}
+    if product_link:
+        path_part, _, qs = product_link.partition("?")
+        parts = [p for p in path_part.rstrip("/").split("/") if p]
+        slug = parts[-1] if parts else None
+        if qs:
+            for pair in qs.split("&"):
+                if "=" in pair:
+                    k, _, v = pair.partition("=")
+                    variation_attributes[k] = v
 
     # Quantity input value
     qty_raw = await attr("input.qty", "value")
@@ -129,6 +151,8 @@ async def parse_cart_item(row: ElementHandle) -> dict[str, Any]:
 
     return {
         "product_id": product_id,
+        "slug": slug,
+        "variation_attributes": variation_attributes or None,
         "name": name,
         "qty": int(qty_raw) if qty_raw and qty_raw.isdigit() else 1,
         "price": _parse_price(price_raw),
@@ -149,6 +173,7 @@ async def parse_order_row(row: ElementHandle) -> dict[str, Any]:
     Returns:
         dict[str, Any]: Order summary fields.
     """
+
     async def text(selector: str) -> str | None:
         el = await row.query_selector(selector)
         return (await el.inner_text()).strip() if el else None
@@ -161,7 +186,9 @@ async def parse_order_row(row: ElementHandle) -> dict[str, Any]:
     order_id = await text(".woocommerce-orders-table__cell-order-number a")
     date = await text(".woocommerce-orders-table__cell-order-date")
     status = await text(".woocommerce-orders-table__cell-order-status")
-    total_raw = await text(".woocommerce-orders-table__cell-order-total .woocommerce-Price-amount")
+    total_raw = await text(
+        ".woocommerce-orders-table__cell-order-total .woocommerce-Price-amount"
+    )
     link = await attr(".woocommerce-orders-table__cell-order-number a", "href")
 
     return {
@@ -185,6 +212,7 @@ async def parse_order_detail_item(row: ElementHandle) -> dict[str, Any]:
     Returns:
         dict[str, Any]: Order item fields including product metadata.
     """
+
     async def text(selector: str) -> str | None:
         el = await row.query_selector(selector)
         return (await el.inner_text()).strip() if el else None
@@ -206,23 +234,23 @@ async def parse_order_detail_item(row: ElementHandle) -> dict[str, Any]:
     if qty_text:
         # Reason: WooCommerce renders quantity as "Product Name × 2" in the name cell
         import re
+
         match = re.search(r"×\s*(\d+)", qty_text)
         if match:
             qty = int(match.group(1))
 
-    # Try data-product_id first if the theme exposes it (numeric ID, add-to-cart ready).
-    # Else derive product_id (slug) and variation_attributes from the product link.
+    # Derive product_id (slug) and variation_attributes from the product link.
     # Variable product URLs look like:
     #   /product/fresh-carrots-1kg/?attribute_quantity=500g
     # Simple product URLs look like:
     #   /product/gorillas-roasted-beans-1000g/
-    product_id: str | None = await attr("[data-product_id]", "data-product_id")
+    slug: str | None = None
     variation_attributes: dict[str, str] = {}
-    if not product_id and product_link:
+    if product_link:
         # Split path from query string before extracting the slug
         path_part, _, qs = product_link.partition("?")
         parts = [p for p in path_part.rstrip("/").split("/") if p]
-        product_id = parts[-1] if parts else None
+        slug = parts[-1] if parts else None
         if qs:
             for pair in qs.split("&"):
                 if "=" in pair:
@@ -230,7 +258,7 @@ async def parse_order_detail_item(row: ElementHandle) -> dict[str, Any]:
                     variation_attributes[k] = v
 
     return {
-        "product_id": product_id,
+        "slug": slug,
         "variation_attributes": variation_attributes or None,
         "name": name,
         "qty": qty,
@@ -290,7 +318,11 @@ async def parse_product_variations(page: Page) -> list[dict[str, Any]]:
                 # Keep raw_attributes so callers can pass them directly to
                 # add_to_cart(variation_attributes=...) without transformation.
                 "raw_attributes": raw_attrs,
-                "price": float(v["display_price"]) if v.get("display_price") is not None else None,
+                "price": (
+                    float(v["display_price"])
+                    if v.get("display_price") is not None
+                    else None
+                ),
                 "in_stock": bool(v.get("is_in_stock", False)),
             }
         )
@@ -317,6 +349,7 @@ async def parse_cart_totals(page: Page, selectors: dict[str, str]) -> dict[str, 
             - total (float | None): Grand total including selected shipping.
             - total_items (int): Number of distinct line items in the cart.
     """
+
     async def _text(selector: str) -> str | None:
         el = await page.query_selector(selector)
         return (await el.inner_text()).strip() if el else None

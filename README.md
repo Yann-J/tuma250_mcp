@@ -86,12 +86,12 @@ After the first successful login, the browser session (cookies) is saved to `TUM
 
 ## Variable products
 
-Some products on Tuma250 require a size/weight selection before they can be added to the cart. Use `get_product_variations` to discover the available options first:
+Some products on Tuma250 require a size/weight selection before they can be added to the cart. Pass the product slug (from `search_products` or `get_order_details`) and optionally `variation_attributes`:
 
 ```
-1. search_products("fresh carrots")          → returns product URL
+1. search_products("fresh carrots")          → returns slug in each result
 2. get_product_variations(product_url)       → lists 250g / 500g / 1kg variants
-3. add_to_cart(product_id, variation_id, variation_attributes)
+3. add_to_cart(product_slug, quantity=1, variation_attributes={"attribute_quantity": "500g"})
 ```
 
 ## Development
@@ -108,6 +108,16 @@ pytest -v
 ```
 
 Copy `config-example.env` to `.env` and fill in your Tuma250 credentials before running tests or the server locally.
+
+To test from command line, you may use `mcporter`, e.g.:
+
+```bash
+npx mcporter call --stdio "uv run tuma250-mcp" get_cart
+npx mcporter call --stdio "uv run tuma250-mcp" 'tuma250.get_order_details(order_id: "193457")'
+npx mcporter call --stdio "uv run tuma250-mcp" 'tuma250.add_to_cart(product_slug: "ripe-mango-fruit-1kg")'
+npx mcporter call --stdio "uv run tuma250-mcp" add_to_cart --args '{"product_slug": "viande-hachee-de-bouef-ordinaire-regular-ground-beef", "variation_attributes": {"attribute_weight":"1kg"}}'
+
+```
 
 ## License
 

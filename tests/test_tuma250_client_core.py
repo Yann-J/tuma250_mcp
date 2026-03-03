@@ -209,10 +209,16 @@ async def test_add_to_cart_success() -> None:
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
         patch.object(
+            client,
+            "_extract_ids_from_product_page",
+            new_callable=AsyncMock,
+            return_value=("42", None),
+        ),
+        patch.object(
             client, "get_cart", new_callable=AsyncMock, return_value=cart_with_item
         ),
     ):
-        result = await client.add_to_cart("42", quantity=1)
+        result = await client.add_to_cart("rice-1kg", quantity=1)
 
     assert result["success"] is True
     assert result["cart_total_items"] == 1
@@ -222,6 +228,8 @@ async def test_add_to_cart_success() -> None:
 async def test_add_to_cart_failure() -> None:
     """add_to_cart returns success=False when the product is absent from the cart."""
     client = _make_client()
+    client._page.wait_for_load_state = AsyncMock()
+
     empty_cart = {
         "items": [],
         "total_items": 0,
@@ -233,16 +241,16 @@ async def test_add_to_cart_failure() -> None:
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
         patch.object(
-            client, "get_cart", new_callable=AsyncMock, return_value=empty_cart
+            client,
+            "_extract_ids_from_product_page",
+            new_callable=AsyncMock,
+            return_value=("99", None),
         ),
         patch.object(
-            client,
-            "_resolve_slug_to_product_id",
-            new_callable=AsyncMock,
-            return_value="99",
+            client, "get_cart", new_callable=AsyncMock, return_value=empty_cart
         ),
     ):
-        result = await client.add_to_cart("p99", quantity=1)
+        result = await client.add_to_cart("some-product-slug", quantity=1)
 
     assert result["success"] is False
 
@@ -322,7 +330,7 @@ async def test_list_recent_orders_capped_at_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_add_to_cart_variable_product_includes_variation_in_url() -> None:
-    """add_to_cart with a variation_id navigates to the correct URL."""
+    """add_to_cart with variation_attributes navigates to product page, extracts IDs, adds to cart."""
     client = _make_client()
     client._page.wait_for_load_state = AsyncMock()
 
@@ -352,19 +360,26 @@ async def test_add_to_cart_variable_product_includes_variation_in_url() -> None:
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
         patch.object(
+            client,
+            "_extract_ids_from_product_page",
+            new_callable=AsyncMock,
+            return_value=("12295", "54913"),
+        ),
+        patch.object(
             client, "get_cart", new_callable=AsyncMock, return_value=cart_with_item
         ),
     ):
         result = await client.add_to_cart(
-            "12295",
+            "fresh-carrots-1kg",
             quantity=1,
-            variation_id="54913",
             variation_attributes={"attribute_quantity": "500g"},
         )
 
     assert result["success"] is True
-    assert any("variation_id=54913" in u for u in navigated_urls)
+    # Product page URL includes variation attr
     assert any("attribute_quantity=500g" in u for u in navigated_urls)
+    # Add-to-cart URL includes variation_id
+    assert any("variation_id=54913" in u for u in navigated_urls)
 
 
 @pytest.mark.asyncio
@@ -409,8 +424,9 @@ async def test_get_order_details_returns_items() -> None:
     client._page.query_selector_all = AsyncMock(return_value=[mock_row, mock_row])
 
     parsed_item = {
-        "product_id": "p1",
-        "name": "Rice",
+        "slug": "rice-basmati-5kg",
+        "variation_attributes": None,
+        "name": "Rice Basmati 5kg",
         "qty": 2,
         "price": 3000.0,
         "brand": None,
@@ -420,12 +436,6 @@ async def test_get_order_details_returns_items() -> None:
 
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
-        patch.object(
-            client,
-            "_resolve_slug_to_product_id",
-            new_callable=AsyncMock,
-            side_effect=lambda x: x if x.isdigit() else "194006",
-        ),
         patch(
             "tuma250_mcp.client_core.parse_order_detail_item",
             new_callable=AsyncMock,
@@ -436,6 +446,5 @@ async def test_get_order_details_returns_items() -> None:
 
     assert result["order_id"] == "order-123"
     assert len(result["items"]) == 2
-    assert result["items"][0]["name"] == "Rice"
-    # Slugs are resolved to numeric IDs
-    assert result["items"][0]["product_id"] == "194006"
+    assert result["items"][0]["name"] == "Rice Basmati 5kg"
+    assert result["items"][0]["slug"] == "rice-basmati-5kg"

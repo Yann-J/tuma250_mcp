@@ -113,25 +113,24 @@ async def get_product_variations(product_url: str) -> list[dict[str, Any]]:
 
 @mcp.tool()
 async def add_to_cart(
-    product_id: str,
+    product_slug: str,
     quantity: int = 1,
-    variation_id: str | None = None,
     variation_attributes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Add a product to the Tuma250 shopping cart.
 
-    For simple products, only product_id is needed.
-    For variable products (e.g. items sold in multiple sizes), call
-    get_product_variations first to discover the variation_id and
-    raw_attributes for the desired option, then pass them here.
+    Uses the product slug (from search_products URL or get_order_details).
+    For variable products, pass variation_attributes so the page pre-selects
+    the variant, e.g. {"attribute_quantity": "500g"}.
 
     Args:
-        product_id: The WooCommerce parent product ID (from search_products).
+        product_slug: Product URL slug, e.g. "fresh-carrots-1kg" (from URL or
+            get_order_details items).
         quantity: Number of units to add (default 1).
-        variation_id: Required for variable products (from get_product_variations).
-        variation_attributes: The raw_attributes dict from get_product_variations,
-            e.g. {"attribute_quantity": "500g"}.
+        variation_attributes: For variable products, attribute key/value pairs
+            e.g. {"attribute_quantity": "500g"} (from get_order_details or
+            get_product_variations raw_attributes).
 
     Returns:
         dict containing:
@@ -142,9 +141,8 @@ async def add_to_cart(
     """
     async with Tuma250Client() as client:
         return await client.add_to_cart(
-            product_id=product_id,
+            product_slug=product_slug,
             quantity=quantity,
-            variation_id=variation_id,
             variation_attributes=variation_attributes,
         )
 
@@ -161,7 +159,8 @@ async def get_cart() -> dict[str, Any]:
 
     Returns:
         dict containing:
-            - items (list): Each item with product_id, name, qty, price, subtotal.
+            - items (list): Each item with product_id, slug, variation_attributes,
+              name, qty, price, subtotal.
             - total_items (int): Number of distinct line items.
             - subtotal (float | None): Items cost before shipping.
             - shipping_options (list): Available shipping methods with label and price.
@@ -212,7 +211,7 @@ async def get_order_details(order_id: str) -> dict[str, Any]:
     Returns:
         dict containing:
             - order_id (str)
-            - items (list): Each item with product_id, variation_attributes,
+            - items (list): Each item with slug, variation_attributes,
               name, qty, price, brand, unit_size, category_path.
     """
     async with Tuma250Client() as client:

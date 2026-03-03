@@ -48,7 +48,6 @@ URLS: dict[str, str] = {
     "order_detail": "/my-account/view-order/{order_id}/",
     "search": "/?s={query}&post_type=product",
     "product": "/product/{slug}/",
-    "product_by_id": "/?p={id}",  # WordPress short link, redirects to canonical product URL
 }
 
 SELECTORS: dict[str, str] = {
@@ -69,6 +68,9 @@ SELECTORS: dict[str, str] = {
     "order_row": "tr.woocommerce-orders-table__row",
     # Order detail items — standard WooCommerce order detail table
     "order_detail_item_row": "tr.woocommerce-table__line-item",
+    # Product page — hidden inputs with IDs for add-to-cart
+    "product_page_product_id": "input[name='product_id']",
+    "product_page_variation_id": "input.variation_id",
 }
 
 
@@ -131,45 +133,44 @@ class Tuma250Client:
         path = URLS[key].format(**kwargs)
         return self._settings.base_url.rstrip("/") + path
 
-    async def _resolve_slug_to_product_id(self, product_id: str) -> str:
+    async def _extract_ids_from_product_page(self) -> tuple[str, str | None]:
         """
-        Resolve a product slug to the numeric WooCommerce product ID.
+        Read product_id and variation_id from the product page.
 
-        Memory stores slugs (e.g. fresh-tomatoes-for-salad-big-size-inyanya)
-        but add-to-cart requires the numeric ID. Visit the product page and
-        extract the ID from the add-to-cart form.
+        Variable products: hidden inputs
+          <input type="hidden" name="product_id" value="12295">
+          <input type="hidden" name="variation_id" class="variation_id" value="54913">
+
+        Simple products: Add to cart button
+          <button name="add-to-cart" value="12256">Add to cart</button>
+
+        Returns:
+            (product_id, variation_id). variation_id is None for simple products.
         """
-        if product_id.isdigit():
-            return product_id
-        product_url = self._url("product", slug=product_id)
-        logger.debug("Resolving slug %r → numeric ID from %s", product_id, product_url)
-        await self.page.goto(product_url)
-        await self.page.wait_for_load_state("networkidle")
-        # WooCommerce: variable products have input[name=add-to-cart] with parent ID
-        add_input = await self.page.query_selector(
-            'form.cart input[name="add-to-cart"]'
+        product_id: str | None = None
+        product_id_el = await self.page.query_selector(
+            SELECTORS["product_page_product_id"]
         )
-        if add_input:
-            numeric_id = await add_input.get_attribute("value")
-            if numeric_id and numeric_id.isdigit():
-                logger.info("Resolved slug %r → product_id=%s", product_id, numeric_id)
-                return numeric_id
-        # Fallback: data-product_id on the add-to-cart button
-        btn = await self.page.query_selector(
-            "button.single_add_to_cart_button[data-product_id], "
-            ".single_add_to_cart_button[data-product_id]"
+        if product_id_el:
+            product_id = await product_id_el.get_attribute("value")
+        if not product_id or not product_id.isdigit():
+            btn = await self.page.query_selector('button[name="add-to-cart"]')
+            if btn:
+                product_id = await btn.get_attribute("value")
+        if not product_id or not product_id.isdigit():
+            raise ValueError(
+                "Product page missing product_id (input[name='product_id'] or "
+                "button[name='add-to-cart'] value). Ensure the page has fully loaded."
+            )
+        var_el = await self.page.query_selector(
+            SELECTORS["product_page_variation_id"]
         )
-        if btn:
-            numeric_id = await btn.get_attribute("data-product_id")
-            if numeric_id and numeric_id.isdigit():
-                logger.info(
-                    "Resolved slug %r → product_id=%s (from button)",
-                    product_id,
-                    numeric_id,
-                )
-                return numeric_id
-        logger.warning("Could not resolve slug %r to numeric ID", product_id)
-        return product_id
+        variation_id: str | None = None
+        if var_el:
+            raw = await var_el.get_attribute("value")
+            if raw and raw.isdigit():
+                variation_id = raw
+        return (product_id, variation_id)
 
     @property
     def page(self) -> Page:
@@ -284,74 +285,55 @@ class Tuma250Client:
 
     async def add_to_cart(
         self,
-        product_id: str,
+        product_slug: str,
         quantity: int = 1,
-        variation_id: str | None = None,
         variation_attributes: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """
-        Add a product to the cart by its WooCommerce product ID.
+        Add a product to the cart by its product slug.
 
-        For variable products, ``variation_id`` (and optionally
-        ``variation_attributes``) must be supplied — use
-        ``get_product_variations`` to discover the available options first.
+        Navigates to the product page, extracts product_id and variation_id from
+        hidden inputs in the DOM, then adds to cart. For variable products, pass
+        variation_attributes (e.g. {"attribute_quantity": "500g"}) — they are
+        appended to the product URL so the page pre-selects the variant and the
+        variation_id hidden input is populated.
 
         Args:
-            product_id (str): The WooCommerce parent product ID.
+            product_slug (str): Product URL slug, e.g. "fresh-carrots-1kg".
             quantity (int): Number of units to add.
-            variation_id (str | None): Required for variable products.
             variation_attributes (dict[str, str] | None): Attribute key/value
-                pairs, e.g. ``{"attribute_quantity": "500g"}``.  Used together
-                with ``variation_id`` to fully specify the variant.
+                pairs for variable products, e.g. {"attribute_quantity": "500g"}.
 
         Returns:
             dict[str, Any]: Summary with success flag and updated cart state.
         """
         await self.ensure_logged_in()
 
-        # Resolve slug → numeric WooCommerce product ID when needed.
-        # Memory stores numeric IDs from get_order_details; slugs need resolution.
-        numeric_product_id = await self._resolve_slug_to_product_id(product_id)
-
-        # Auto-resolve variation_id from the product page when only
-        # variation_attributes are known (e.g. from stored preferences).
-        if variation_attributes and not variation_id:
-            if product_id.isdigit():
-                product_url = self._url("product_by_id", id=product_id)
-            else:
-                product_url = self._url("product", slug=product_id)
-            variations = await self.get_product_variations(product_url)
-            for v in variations:
-                raw_attrs = v.get("raw_attributes", {})
-                if all(
-                    raw_attrs.get(k) == val for k, val in variation_attributes.items()
-                ):
-                    variation_id = v["variation_id"]
-                    logger.info(
-                        "Auto-resolved variation_id=%s for %s %s",
-                        variation_id,
-                        product_id,
-                        variation_attributes,
-                    )
-                    break
-            else:
-                logger.warning(
-                    "Could not resolve variation_id for %s %s — "
-                    "attempting add without it.",
-                    product_id,
-                    variation_attributes,
-                )
+        # Build product URL; variation_attributes in query string pre-select the variant
+        product_url = self._url("product", slug=product_slug)
+        if variation_attributes:
+            qs = "&".join(
+                f"{k}={v}" for k, v in variation_attributes.items()
+            )
+            product_url = f"{product_url}?{qs}"
 
         logger.info(
-            "Adding product %s (variation=%s, qty=%d) to cart",
-            numeric_product_id,
-            variation_id,
+            "Adding product slug %r (qty=%d) to cart → %s",
+            product_slug,
             quantity,
+            product_url,
+        )
+        await self.page.goto(product_url)
+        await self.page.wait_for_load_state("networkidle")
+
+        product_id, variation_id = await self._extract_ids_from_product_page()
+        logger.debug(
+            "Extracted product_id=%s variation_id=%s from product page",
+            product_id,
+            variation_id,
         )
 
-        # Reason: WooCommerce accepts add-to-cart via a GET URL.
-        # add-to-cart must be the numeric product ID, not the slug.
-        params = f"add-to-cart={numeric_product_id}&quantity={quantity}"
+        params = f"add-to-cart={product_id}&quantity={quantity}"
         if variation_id:
             params += f"&variation_id={variation_id}"
         if variation_attributes:
@@ -364,10 +346,10 @@ class Tuma250Client:
 
         cart = await self.get_cart()
         item_ids = [item["product_id"] for item in cart.get("items", [])]
-        # Variable products: cart stores variation_id. Simple: cart stores
-        # numeric product_id. Check both for robustness.
-        target_id = variation_id or numeric_product_id
-        success = str(target_id) in item_ids or str(numeric_product_id) in item_ids
+        target_id = variation_id or product_id
+        success = (
+            str(target_id) in item_ids or str(product_id) in item_ids
+        )
 
         return {
             "success": success,
@@ -456,13 +438,7 @@ class Tuma250Client:
         items: list[dict[str, Any]] = []
         for row in rows:
             try:
-                item = await parse_order_detail_item(row)
-                pid = item.get("product_id")
-                # Resolve slug → numeric ID so memory stores IDs (add_to_cart expects numeric).
-                if pid and not pid.isdigit():
-                    resolved = await self._resolve_slug_to_product_id(pid)
-                    item["product_id"] = resolved
-                items.append(item)
+                items.append(await parse_order_detail_item(row))
             except Exception:
                 logger.exception("Failed to parse order detail item")
 

@@ -19,10 +19,10 @@ Operate the **Tuma250** grocery site, also called simply "Tuma", using the local
 
 1) **Add to cart**
 
-- Simple product:
-  - `mcporter call tuma250.add_to_cart --args '{"product_id":"12310","quantity":1}'`
-- Variable product (choose a variation from step 2):
-  - `mcporter call tuma250.add_to_cart --args '{"product_id":"<parent>","quantity":1,"variation_id":"<variation>","variation_attributes":{...}}'`
+- Simple product (slug from search_products or get_order_details):
+  - `mcporter call tuma250.add_to_cart --args '{"product_slug":"fresh-carrots-1kg","quantity":1}'`
+- Variable product (pass variation_attributes to pre-select variant):
+  - `mcporter call tuma250.add_to_cart --args '{"product_slug":"fresh-carrots-1kg","quantity":1,"variation_attributes":{"attribute_quantity":"500g"}}'`
 
 1) **View cart (basket)**
 
@@ -38,7 +38,7 @@ Operate the **Tuma250** grocery site, also called simply "Tuma", using the local
 
 Notes:
 
-- Prefer `--args` JSON for `add_to_cart` so `product_id` stays a **string**.
+- Use `product_slug` (e.g. from search result or get_order_details item). The slug is the last path segment of the product URL.
 
 ### Confirm what’s currently in the basket
 
