@@ -1,0 +1,44 @@
+[project]
+name = "tuma250-mcp"
+version = "0.1.2"
+description = "MCP server for the Tuma250 grocery site (Kigali, Rwanda)"
+authors = [{ name = "Yann Jouanique", email = "yann.jouanique@gmail.com" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+keywords = ["mcp", "grocery", "tuma250", "rwanda", "kigali", "ecommerce"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Internet :: WWW/HTTP :: Browsers",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+  "mcp>=1.26,<2.0",
+  "playwright>=1.51,<2.0",
+  "pydantic>=2.0,<3.0",
+  "pydantic-settings>=2.13,<3.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yannjouanique/tuma250_mcp"
+Repository = "https://github.com/yannjouanique/tuma250_mcp"
+"Bug Tracker" = "https://github.com/yannjouanique/tuma250_mcp/issues"
+
+[project.scripts]
+tuma250-mcp = "tuma250_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["tuma250_mcp"]
+
+[tool.setuptools.package-dir]
+"tuma250_mcp" = "."
