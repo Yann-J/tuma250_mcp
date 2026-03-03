@@ -236,7 +236,10 @@ async def test_add_to_cart_failure() -> None:
             client, "get_cart", new_callable=AsyncMock, return_value=empty_cart
         ),
         patch.object(
-            client, "_resolve_slug_to_product_id", new_callable=AsyncMock, return_value="99"
+            client,
+            "_resolve_slug_to_product_id",
+            new_callable=AsyncMock,
+            return_value="99",
         ),
     ):
         result = await client.add_to_cart("p99", quantity=1)

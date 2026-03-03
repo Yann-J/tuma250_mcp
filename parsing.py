@@ -210,14 +210,15 @@ async def parse_order_detail_item(row: ElementHandle) -> dict[str, Any]:
         if match:
             qty = int(match.group(1))
 
-    # Derive product_id (slug) and variation_attributes from the product link.
+    # Try data-product_id first if the theme exposes it (numeric ID, add-to-cart ready).
+    # Else derive product_id (slug) and variation_attributes from the product link.
     # Variable product URLs look like:
     #   /product/fresh-carrots-1kg/?attribute_quantity=500g
     # Simple product URLs look like:
     #   /product/gorillas-roasted-beans-1000g/
-    product_id: str | None = None
+    product_id: str | None = await attr("[data-product_id]", "data-product_id")
     variation_attributes: dict[str, str] = {}
-    if product_link:
+    if not product_id and product_link:
         # Split path from query string before extracting the slug
         path_part, _, qs = product_link.partition("?")
         parts = [p for p in path_part.rstrip("/").split("/") if p]

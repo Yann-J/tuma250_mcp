@@ -173,7 +173,9 @@ class Tuma250Client:
     @property
     def page(self) -> Page:
         if self._page is None:
-            raise RuntimeError("Tuma250Client must be used as an async context manager.")
+            raise RuntimeError(
+                "Tuma250Client must be used as an async context manager."
+            )
         return self._page
 
     async def _save_session(self) -> None:
@@ -317,8 +319,7 @@ class Tuma250Client:
             for v in variations:
                 raw_attrs = v.get("raw_attributes", {})
                 if all(
-                    raw_attrs.get(k) == val
-                    for k, val in variation_attributes.items()
+                    raw_attrs.get(k) == val for k, val in variation_attributes.items()
                 ):
                     variation_id = v["variation_id"]
                     logger.info(
@@ -361,10 +362,7 @@ class Tuma250Client:
         # Variable products: cart stores variation_id. Simple: cart stores
         # numeric product_id. Check both for robustness.
         target_id = variation_id or numeric_product_id
-        success = (
-            str(target_id) in item_ids
-            or str(numeric_product_id) in item_ids
-        )
+        success = str(target_id) in item_ids or str(numeric_product_id) in item_ids
 
         return {
             "success": success,
@@ -453,7 +451,13 @@ class Tuma250Client:
         items: list[dict[str, Any]] = []
         for row in rows:
             try:
-                items.append(await parse_order_detail_item(row))
+                item = await parse_order_detail_item(row)
+                pid = item.get("product_id")
+                # Resolve slug → numeric ID so memory stores IDs (add_to_cart expects numeric).
+                if pid and not pid.isdigit():
+                    resolved = await self._resolve_slug_to_product_id(pid)
+                    item["product_id"] = resolved
+                items.append(item)
             except Exception:
                 logger.exception("Failed to parse order detail item")
 
