@@ -1,5 +1,7 @@
 # tuma250-mcp
 
+[![PyPI version](https://badge.fury.io/py/tuma250-mcp.svg)](https://pypi.org/project/tuma250-mcp/)
+
 An [MCP](https://modelcontextprotocol.io) server for the [Tuma 250](https://tuma250.com) grocery site (Kigali, Rwanda).
 
 Gives any MCP-compatible AI client (Cursor, Claude Desktop, etc.) the ability to search products, manage a shopping cart, and browse order history on Tuma250 — using a headless Playwright browser under the hood.
