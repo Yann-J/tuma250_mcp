@@ -1,6 +1,7 @@
 # tuma250-mcp
 
-[![PyPI version](https://badge.fury.io/py/tuma250-mcp.svg)](https://pypi.org/project/tuma250-mcp/)
+[![PyPI version](https://img.shields.io/pypi/v/tuma250-mcp?style=for-the-badge&logo=python&logoColor=white&color=green
+)](https://pypi.org/project/tuma250-mcp/)
 
 An [MCP](https://modelcontextprotocol.io) server for the [Tuma 250](https://tuma250.com) grocery site (Kigali, Rwanda).
 
