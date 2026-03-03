@@ -243,7 +243,7 @@ async def test_parse_order_row_parses_total() -> None:
 
     result = await parse_order_row(row)
 
-    assert result["order_id"] == "#12345"
+    assert result["order_id"] == "12345"
     assert result["total"] == 45000.0
     assert result["status"] == "Completed"
     assert result["link"] == "https://tuma250.com/my-account/view-order/12345/"
