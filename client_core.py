@@ -55,8 +55,10 @@ SELECTORS: dict[str, str] = {
     "login_username": "#username",
     "login_password": "#password",
     "login_submit": "button[name='login']",
-    # Present only when authenticated (standard WooCommerce My Account nav)
-    "login_success_indicator": ".woocommerce-MyAccount-navigation",
+    # Present only when authenticated — the Flatsome theme does not render
+    # the standard .woocommerce-MyAccount-navigation element. Instead we check
+    # for the customer-logout link, which only appears for logged-in users.
+    "login_success_indicator": "a[href*='customer-logout']",
     # Product search results — Flatsome theme uses div.product-small, not li.product
     "product_card": "div.product-small",
     # Cart — standard WooCommerce table classes
@@ -189,7 +191,7 @@ class Tuma250Client:
         Check whether the current session is authenticated.
 
         Returns:
-            bool: True if the account navigation element is visible.
+            bool: True if the logout link is present (user is authenticated).
         """
         await self.page.goto(self._url("login"))
         el = await self.page.query_selector(SELECTORS["login_success_indicator"])
