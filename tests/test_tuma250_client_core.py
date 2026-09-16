@@ -12,7 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tuma250_mcp.client_core import Tuma250Client
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+from tuma250_mcp.client_core import SELECTORS, Tuma250Client
 from tuma250_mcp.config import Tuma250Settings
 
 
@@ -61,44 +63,90 @@ async def test_ensure_logged_in_skips_when_already_authenticated() -> None:
     client._page.click.assert_not_called()
 
 
+def _login_query_selector(*, remember: bool = True, error_text: str | None = None, nav: bool = True):
+    """Build a query_selector mock for the post-submit login page."""
+
+    async def query_selector(selector: str) -> AsyncMock | None:
+        if selector == SELECTORS["login_remember"]:
+            return AsyncMock() if remember else None
+        if selector == SELECTORS["login_error"]:
+            if not error_text:
+                return None
+            el = AsyncMock()
+            el.inner_text = AsyncMock(return_value=error_text)
+            return el
+        if selector == SELECTORS["login_success_indicator"]:
+            return AsyncMock() if nav else None
+        return None
+
+    return query_selector
+
+
 @pytest.mark.asyncio
 async def test_ensure_logged_in_fills_form_and_saves_session() -> None:
     """If not logged in, the form is filled, submitted, and session is saved."""
     client = _make_client()
-    client._page.wait_for_load_state = AsyncMock()
+    client._page.wait_for_selector = AsyncMock()
+    client._page.check = AsyncMock()
+    client._page.query_selector = _login_query_selector()
 
-    # First call (check) → not logged in; second call (verify) → logged in
     with (
         patch.object(
             client,
             "_is_logged_in",
             new_callable=AsyncMock,
-            side_effect=[False, True],
+            return_value=False,
         ),
         patch.object(client, "_save_session", new_callable=AsyncMock) as mock_save,
     ):
         await client.ensure_logged_in()
 
-    client._page.fill.assert_any_call("#username", "test@example.com")
-    client._page.fill.assert_any_call("#password", "secret")
-    client._page.click.assert_called_once_with("button[name='login']")
+    client._page.fill.assert_any_call(
+        SELECTORS["login_username"], "test@example.com"
+    )
+    client._page.fill.assert_any_call(SELECTORS["login_password"], "secret")
+    client._page.check.assert_called_once_with(SELECTORS["login_remember"])
+    client._page.click.assert_called_once_with(SELECTORS["login_submit"])
     mock_save.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_ensure_logged_in_raises_on_failure() -> None:
-    """If login fails (still not authenticated after submit), RuntimeError is raised."""
+async def test_ensure_logged_in_raises_woocommerce_error() -> None:
+    """WooCommerce error notices are surfaced in the RuntimeError."""
     client = _make_client()
-    client._page.wait_for_load_state = AsyncMock()
+    client._page.wait_for_selector = AsyncMock()
+    client._page.check = AsyncMock()
+    client._page.query_selector = _login_query_selector(
+        error_text="Invalid username or password.",
+        nav=False,
+    )
 
-    # Both checks return False → login failed
     with patch.object(
         client,
         "_is_logged_in",
         new_callable=AsyncMock,
         return_value=False,
     ):
-        with pytest.raises(RuntimeError, match="Login failed"):
+        with pytest.raises(RuntimeError, match="Invalid username or password"):
+            await client.ensure_logged_in()
+
+
+@pytest.mark.asyncio
+async def test_ensure_logged_in_raises_on_timeout() -> None:
+    """If neither dashboard nor error appears, RuntimeError is raised."""
+    client = _make_client()
+    client._page.wait_for_selector = AsyncMock(
+        side_effect=[None, PlaywrightTimeoutError("Timeout")]
+    )
+    client._page.query_selector = _login_query_selector()
+
+    with patch.object(
+        client,
+        "_is_logged_in",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        with pytest.raises(RuntimeError, match="Login did not complete"):
             await client.ensure_logged_in()
 
 
@@ -184,6 +232,21 @@ async def test_search_products_respects_max_results() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _in_stock_availability(
+    *,
+    name: str = "Rice",
+    is_variable: bool = False,
+    missing: bool = False,
+    in_stock: bool = True,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "in_stock": in_stock,
+        "is_variable": is_variable,
+        "missing": missing,
+    }
+
+
 @pytest.mark.asyncio
 async def test_add_to_cart_success() -> None:
     """add_to_cart returns success=True when the product appears in the cart."""
@@ -208,6 +271,16 @@ async def test_add_to_cart_success() -> None:
 
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch(
+            "tuma250_mcp.client_core.parse_product_availability",
+            new_callable=AsyncMock,
+            return_value=_in_stock_availability(),
+        ),
+        patch(
+            "tuma250_mcp.client_core.parse_woocommerce_notices",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
         patch.object(
             client,
             "_extract_ids_from_product_page",
@@ -221,6 +294,7 @@ async def test_add_to_cart_success() -> None:
         result = await client.add_to_cart("rice-1kg", quantity=1)
 
     assert result["success"] is True
+    assert result["error"] is None
     assert result["cart_total_items"] == 1
 
 
@@ -240,6 +314,16 @@ async def test_add_to_cart_failure() -> None:
 
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch(
+            "tuma250_mcp.client_core.parse_product_availability",
+            new_callable=AsyncMock,
+            return_value=_in_stock_availability(name="Some Product"),
+        ),
+        patch(
+            "tuma250_mcp.client_core.parse_woocommerce_notices",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
         patch.object(
             client,
             "_extract_ids_from_product_page",
@@ -253,6 +337,146 @@ async def test_add_to_cart_failure() -> None:
         result = await client.add_to_cart("some-product-slug", quantity=1)
 
     assert result["success"] is False
+    assert result["error"] == "add_failed"
+    assert "not added" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_add_to_cart_reports_out_of_stock() -> None:
+    """Out-of-stock products fail before add-to-cart with a clear message."""
+    client = _make_client()
+    client._page.wait_for_load_state = AsyncMock()
+
+    with (
+        patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch(
+            "tuma250_mcp.client_core.parse_product_availability",
+            new_callable=AsyncMock,
+            return_value=_in_stock_availability(
+                name="Passion Fruit ( Maracuja /Amatunda)",
+                in_stock=False,
+                is_variable=True,
+            ),
+        ),
+        patch.object(
+            client, "get_cart", new_callable=AsyncMock
+        ) as mock_get_cart,
+    ):
+        result = await client.add_to_cart("passion-fruit-maracuja", quantity=1)
+
+    assert result["success"] is False
+    assert result["error"] == "out_of_stock"
+    assert "out of stock" in result["message"].lower()
+    assert "Passion Fruit" in result["message"]
+    mock_get_cart.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_to_cart_reports_variation_required() -> None:
+    """Variable products without a selected variant ask for variation_attributes."""
+    client = _make_client()
+    client._page.wait_for_load_state = AsyncMock()
+
+    with (
+        patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch(
+            "tuma250_mcp.client_core.parse_product_availability",
+            new_callable=AsyncMock,
+            return_value=_in_stock_availability(
+                name="Fresh Carrots",
+                is_variable=True,
+            ),
+        ),
+        patch.object(
+            client,
+            "_extract_ids_from_product_page",
+            new_callable=AsyncMock,
+            return_value=("12295", None),
+        ),
+        patch.object(client, "get_cart", new_callable=AsyncMock) as mock_get_cart,
+    ):
+        result = await client.add_to_cart("fresh-carrots-1kg", quantity=1)
+
+    assert result["success"] is False
+    assert result["error"] == "variation_required"
+    assert "get_product_variations" in result["message"]
+    mock_get_cart.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_to_cart_uses_woocommerce_notice() -> None:
+    """WooCommerce error notices are returned when the cart does not contain the item."""
+    client = _make_client()
+    client._page.wait_for_load_state = AsyncMock()
+
+    empty_cart = {
+        "items": [],
+        "total_items": 0,
+        "subtotal": 0.0,
+        "shipping_options": [],
+        "total": 0.0,
+    }
+    notice = (
+        'You cannot add "Passion Fruit ( Maracuja /Amatunda) - 250g" '
+        "to the cart because the product is out of stock."
+    )
+
+    with (
+        patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch(
+            "tuma250_mcp.client_core.parse_product_availability",
+            new_callable=AsyncMock,
+            return_value=_in_stock_availability(
+                name="Passion Fruit ( Maracuja /Amatunda)",
+                is_variable=True,
+            ),
+        ),
+        patch(
+            "tuma250_mcp.client_core.parse_woocommerce_notices",
+            new_callable=AsyncMock,
+            return_value=[{"type": "error", "text": notice}],
+        ),
+        patch.object(
+            client,
+            "_extract_ids_from_product_page",
+            new_callable=AsyncMock,
+            return_value=("41995", "48915"),
+        ),
+        patch.object(
+            client, "get_cart", new_callable=AsyncMock, return_value=empty_cart
+        ),
+    ):
+        result = await client.add_to_cart(
+            "passion-fruit-maracuja",
+            quantity=1,
+            variation_attributes={"attribute_weight": "250g"},
+        )
+
+    assert result["success"] is False
+    assert result["error"] == "out_of_stock"
+    assert result["message"] == notice
+
+
+@pytest.mark.asyncio
+async def test_add_to_cart_reports_product_not_found() -> None:
+    """A missing product page returns product_not_found without hitting the cart."""
+    client = _make_client()
+    client._page.wait_for_load_state = AsyncMock()
+
+    with (
+        patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch(
+            "tuma250_mcp.client_core.parse_product_availability",
+            new_callable=AsyncMock,
+            return_value=_in_stock_availability(missing=True, in_stock=False),
+        ),
+        patch.object(client, "get_cart", new_callable=AsyncMock) as mock_get_cart,
+    ):
+        result = await client.add_to_cart("no-such-product")
+
+    assert result["success"] is False
+    assert result["error"] == "product_not_found"
+    mock_get_cart.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +583,19 @@ async def test_add_to_cart_variable_product_includes_variation_in_url() -> None:
 
     with (
         patch.object(client, "ensure_logged_in", new_callable=AsyncMock),
+        patch(
+            "tuma250_mcp.client_core.parse_product_availability",
+            new_callable=AsyncMock,
+            return_value=_in_stock_availability(
+                name="Fresh Carrots 500g",
+                is_variable=True,
+            ),
+        ),
+        patch(
+            "tuma250_mcp.client_core.parse_woocommerce_notices",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
         patch.object(
             client,
             "_extract_ids_from_product_page",
@@ -380,6 +617,30 @@ async def test_add_to_cart_variable_product_includes_variation_in_url() -> None:
     assert any("attribute_quantity=500g" in u for u in navigated_urls)
     # Add-to-cart URL includes variation_id
     assert any("variation_id=54913" in u for u in navigated_urls)
+
+
+@pytest.mark.asyncio
+async def test_extract_ids_treats_zero_variation_as_missing() -> None:
+    """WooCommerce variation_id=0 means no variant is selected."""
+    client = _make_client()
+
+    async def query_selector(selector: str) -> AsyncMock | None:
+        if selector == SELECTORS["product_page_product_id"]:
+            el = AsyncMock()
+            el.get_attribute = AsyncMock(return_value="41995")
+            return el
+        if selector == SELECTORS["product_page_variation_id"]:
+            el = AsyncMock()
+            el.get_attribute = AsyncMock(return_value="0")
+            return el
+        return None
+
+    client._page.query_selector = query_selector
+
+    product_id, variation_id = await client._extract_ids_from_product_page()
+
+    assert product_id == "41995"
+    assert variation_id is None
 
 
 @pytest.mark.asyncio

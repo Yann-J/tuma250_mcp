@@ -77,6 +77,7 @@ async def search_products(query: str, max_results: int = 10) -> list[dict[str, A
             - price (float | None): Unit price.
             - url (str | None): Product page URL.
             - category_path (str | None): Category breadcrumb.
+            - in_stock (bool): Whether the product can currently be purchased.
     """
     async with Tuma250Client() as client:
         return await client.search_products(query=query, max_results=max_results)
@@ -135,17 +136,30 @@ async def add_to_cart(
     Returns:
         dict containing:
             - success (bool): Whether the item was confirmed in the cart.
+            - error (str | None): Stable failure code when success is false:
+              ``out_of_stock``, ``variation_required``, ``product_not_found``,
+              or ``add_failed``.
+            - message (str | None): Human-readable reason, e.g. WooCommerce
+              "out of stock" notice text.
             - cart_total_items (int): Total number of line items in the cart.
             - cart_total_price (float | None): Cart grand total.
             - line_item_summary (list): Each item with id, slug,
               variation_attributes, name, qty.
     """
     async with Tuma250Client() as client:
-        return await client.add_to_cart(
-            product_slug=product_slug,
-            quantity=quantity,
-            variation_attributes=variation_attributes,
-        )
+        try:
+            return await client.add_to_cart(
+                product_slug=product_slug,
+                quantity=quantity,
+                variation_attributes=variation_attributes,
+            )
+        except Exception as exc:
+            logger.exception("add_to_cart failed")
+            return {
+                "success": False,
+                "error": "unexpected_error",
+                "message": str(exc),
+            }
 
 
 # ---------------------------------------------------------------------------

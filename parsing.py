@@ -19,6 +19,12 @@ from playwright.async_api import ElementHandle, Page
 logger = logging.getLogger(__name__)
 
 
+def _has_out_of_stock_class(class_attr: str | None) -> bool:
+    """True when a WooCommerce/Flatsome class list marks the product unavailable."""
+    classes = set((class_attr or "").split())
+    return "outofstock" in classes or "out-of-stock" in classes
+
+
 def _parse_price(raw: str | None) -> float | None:
     """
     Convert a raw price string like "RWF 1,500" or "1,500.00" to a float.
@@ -87,6 +93,11 @@ async def parse_product_card(card: ElementHandle) -> dict[str, Any]:
         parts = [p for p in url.rstrip("/").split("/") if p]
         slug = parts[-1] if parts else None
 
+    class_attr = await card.get_attribute("class")
+    in_stock = not _has_out_of_stock_class(class_attr)
+    if in_stock and await card.query_selector(".out-of-stock-label"):
+        in_stock = False
+
     return {
         "id": product_id,
         "slug": slug,
@@ -97,6 +108,7 @@ async def parse_product_card(card: ElementHandle) -> dict[str, Any]:
         "price": _parse_price(price_raw),
         "url": url,
         "category_path": category,
+        "in_stock": in_stock,
     }
 
 
@@ -330,6 +342,96 @@ async def parse_product_variations(page: Page) -> list[dict[str, Any]]:
         )
 
     return results
+
+
+async def parse_woocommerce_notices(page: Page) -> list[dict[str, str]]:
+    """
+    Collect WooCommerce store notices from the current page.
+
+    Flatsome renders these as ``ul.woocommerce-error.message-wrapper`` (and
+    the matching ``-message`` / ``-info`` variants).
+    """
+    notices: list[dict[str, str]] = []
+    for css, notice_type in (
+        (".woocommerce-error", "error"),
+        (".woocommerce-message", "message"),
+        (".woocommerce-info", "info"),
+    ):
+        for el in await page.query_selector_all(css):
+            text = (await el.inner_text()).strip()
+            if text:
+                notices.append({"type": notice_type, "text": text})
+    return notices
+
+
+async def parse_product_availability(page: Page) -> dict[str, Any]:
+    """
+    Read stock / variation state from a WooCommerce product page.
+
+    Returns:
+        dict with:
+            - name (str | None)
+            - in_stock (bool): False if the product or selected variant is OOS
+            - is_variable (bool)
+            - missing (bool): True when no product wrapper is on the page
+    """
+    product = await page.query_selector("div.product.type-product")
+    if not product:
+        return {
+            "name": None,
+            "in_stock": False,
+            "is_variable": False,
+            "missing": True,
+        }
+
+    name: str | None = None
+    title_el = await page.query_selector("h1.product_title, h1.product-title")
+    if title_el:
+        name = (await title_el.inner_text()).strip() or None
+
+    in_stock = not _has_out_of_stock_class(await product.get_attribute("class"))
+
+    stock_el = await product.query_selector("p.stock.out-of-stock")
+    if stock_el:
+        in_stock = False
+
+    meta = await page.query_selector('meta[property="og:availability"]')
+    if meta:
+        content = (await meta.get_attribute("content") or "").lower()
+        if "out of stock" in content:
+            in_stock = False
+
+    variations = await parse_product_variations(page)
+    is_variable = bool(variations) or bool(
+        await page.query_selector("form.variations_form")
+    )
+    if variations and not any(v.get("in_stock") for v in variations):
+        in_stock = False
+
+    var_el = await page.query_selector("input.variation_id")
+    selected_variation_id: str | None = None
+    if var_el:
+        raw = await var_el.get_attribute("value")
+        if raw and raw.isdigit() and raw != "0":
+            selected_variation_id = raw
+    if selected_variation_id:
+        match = next(
+            (
+                v
+                for v in variations
+                if v.get("variation_id") == selected_variation_id
+            ),
+            None,
+        )
+        if match is not None:
+            in_stock = bool(match.get("in_stock"))
+
+    return {
+        "name": name,
+        "in_stock": in_stock,
+        "is_variable": is_variable,
+        "missing": False,
+    }
 
 
 async def parse_cart_totals(page: Page, selectors: dict[str, str]) -> dict[str, Any]:

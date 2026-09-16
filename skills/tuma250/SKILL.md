@@ -39,6 +39,7 @@ Operate the **Tuma250** grocery site, also called simply "Tuma", using the local
 Notes:
 
 - Use `product_slug` (e.g. from search result or get_order_details item). The slug is the last path segment of the product URL.
+- Skip products with `in_stock: false`. `add_to_cart` will also fail with `error: "out_of_stock"` and a message if stock ran out.
 
 ### Confirm what’s currently in the basket
 

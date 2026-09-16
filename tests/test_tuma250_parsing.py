@@ -18,8 +18,10 @@ from tuma250_mcp.parsing import (
     parse_cart_totals,
     parse_order_detail_item,
     parse_order_row,
+    parse_product_availability,
     parse_product_card,
     parse_product_variations,
+    parse_woocommerce_notices,
 )
 
 
@@ -43,6 +45,8 @@ def _mock_card(
     name: str = "Rice 1kg",
     price_text: str = "RWF\xa01,500",
     url: str = "https://tuma250.com/product/rice-1kg/",
+    css_class: str = "product-small col has-hover instock type-product",
+    out_of_stock_label: bool = False,
 ) -> AsyncMock:
     """
     Build a mock ElementHandle representing a div.product-small card.
@@ -50,6 +54,7 @@ def _mock_card(
     query_selector returns different mocks depending on the CSS selector.
     """
     card = AsyncMock()
+    card.get_attribute = AsyncMock(return_value=css_class)
 
     async def query_selector(selector: str) -> AsyncMock | None:
         if selector == "[data-product_id]":
@@ -62,6 +67,8 @@ def _mock_card(
             return _mock_element(attr_value=url)
         if selector == ".product-category":
             return None
+        if selector == ".out-of-stock-label":
+            return _mock_element(text_value="OUT OF STOCK") if out_of_stock_label else None
         return None
 
     card.query_selector = query_selector
@@ -118,12 +125,16 @@ async def test_parse_product_card_extracts_all_fields() -> None:
         result["url"]
         == "https://tuma250.com/product/imperial-leather-jasmine-rice-bathing-soap-150g/"
     )
+    assert result["in_stock"] is True
 
 
 @pytest.mark.asyncio
 async def test_parse_product_card_handles_missing_price() -> None:
     """parse_product_card returns price=None when the price element is absent."""
     card = AsyncMock()
+    card.get_attribute = AsyncMock(
+        return_value="product-small col has-hover instock type-product"
+    )
 
     async def query_selector(selector: str) -> AsyncMock | None:
         if selector == "[data-product_id]":
@@ -134,6 +145,8 @@ async def test_parse_product_card_handles_missing_price() -> None:
             return None  # price element absent
         if selector == "a.woocommerce-LoopProduct-link":
             return _mock_element(attr_value="https://tuma250.com/product/oos/")
+        if selector == ".out-of-stock-label":
+            return None
         return None
 
     card.query_selector = query_selector
@@ -142,6 +155,25 @@ async def test_parse_product_card_handles_missing_price() -> None:
 
     assert result["price"] is None
     assert result["id"] == "999"
+
+
+@pytest.mark.asyncio
+async def test_parse_product_card_detects_out_of_stock() -> None:
+    """Cards with the WooCommerce outofstock class are reported as unavailable."""
+    card = _mock_card(
+        name="Passion Fruit ( Maracuja /Amatunda)",
+        url="https://tuma250.com/shop/fruits-vegetables/fruits/passion-fruit-maracuja/",
+        css_class=(
+            "product-small col has-hover out-of-stock product type-product "
+            "outofstock product-type-variable"
+        ),
+        out_of_stock_label=True,
+    )
+
+    result = await parse_product_card(card)
+
+    assert result["in_stock"] is False
+    assert result["slug"] == "passion-fruit-maracuja"
 
 
 # ---------------------------------------------------------------------------
@@ -329,3 +361,156 @@ async def test_parse_product_variations_handles_malformed_json() -> None:
     results = await parse_product_variations(page)
 
     assert results == []
+
+
+# ---------------------------------------------------------------------------
+# parse_woocommerce_notices / parse_product_availability
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_parse_woocommerce_notices_extracts_error_text() -> None:
+    """WooCommerce error notices are returned as type=error with visible text."""
+    page = AsyncMock()
+    error_el = _mock_element(
+        text_value=(
+            'You cannot add "Passion Fruit ( Maracuja /Amatunda) - 250g" '
+            "to the cart because the product is out of stock."
+        )
+    )
+    empty: list[Any] = []
+
+    async def query_selector_all(selector: str) -> list[AsyncMock]:
+        if selector == ".woocommerce-error":
+            return [error_el]
+        return empty
+
+    page.query_selector_all = query_selector_all
+
+    notices = await parse_woocommerce_notices(page)
+
+    assert notices == [
+        {
+            "type": "error",
+            "text": (
+                'You cannot add "Passion Fruit ( Maracuja /Amatunda) - 250g" '
+                "to the cart because the product is out of stock."
+            ),
+        }
+    ]
+
+
+def _mock_product_page(
+    *,
+    product_class: str,
+    name: str = "Passion Fruit ( Maracuja /Amatunda)",
+    stock_text: str | None = "Out of stock",
+    og_availability: str | None = "out of stock",
+    variations_json: str | None = None,
+    variation_id: str | None = "0",
+) -> AsyncMock:
+    """Build a product-page mock covering availability selectors."""
+    page = AsyncMock()
+    product = AsyncMock()
+    product.get_attribute = AsyncMock(return_value=product_class)
+    product.query_selector = AsyncMock(
+        return_value=_mock_element(text_value=stock_text) if stock_text else None
+    )
+
+    async def query_selector(selector: str) -> AsyncMock | None:
+        if selector == "div.product.type-product":
+            return product
+        if selector == "h1.product_title, h1.product-title":
+            return _mock_element(text_value=name)
+        if selector == 'meta[property="og:availability"]':
+            return (
+                _mock_element(attr_value=og_availability) if og_availability else None
+            )
+        if selector == "form.variations_form[data-product_variations]":
+            if not variations_json:
+                return None
+            form = AsyncMock()
+            form.get_attribute = AsyncMock(return_value=variations_json)
+            return form
+        if selector == "form.variations_form":
+            return AsyncMock() if variations_json else None
+        if selector == "input.variation_id":
+            return _mock_element(attr_value=variation_id) if variation_id else None
+        return None
+
+    page.query_selector = query_selector
+    return page
+
+
+_OOS_VARIATIONS_JSON = (
+    '[{"variation_id":48915,"attributes":{"attribute_weight":"250g"},'
+    '"display_price":850,"is_in_stock":false},'
+    '{"variation_id":48916,"attributes":{"attribute_weight":"500g"},'
+    '"display_price":1650,"is_in_stock":false}]'
+)
+
+
+@pytest.mark.asyncio
+async def test_parse_product_availability_detects_out_of_stock_variable() -> None:
+    """A variable product with every variant OOS is reported as unavailable."""
+    page = _mock_product_page(
+        product_class="product type-product outofstock product-type-variable",
+        variations_json=_OOS_VARIATIONS_JSON,
+    )
+
+    result = await parse_product_availability(page)
+
+    assert result["missing"] is False
+    assert result["in_stock"] is False
+    assert result["is_variable"] is True
+    assert result["name"] == "Passion Fruit ( Maracuja /Amatunda)"
+
+
+@pytest.mark.asyncio
+async def test_parse_product_availability_simple_in_stock() -> None:
+    """A simple in-stock product is reported as available."""
+    page = _mock_product_page(
+        product_class="product type-product instock product-type-simple",
+        name="Papaya Fruit/pcs",
+        stock_text=None,
+        og_availability="in stock",
+        variations_json=None,
+        variation_id=None,
+    )
+
+    result = await parse_product_availability(page)
+
+    assert result["missing"] is False
+    assert result["in_stock"] is True
+    assert result["is_variable"] is False
+    assert result["name"] == "Papaya Fruit/pcs"
+
+
+@pytest.mark.asyncio
+async def test_parse_product_availability_missing_product() -> None:
+    """Pages without a product wrapper are flagged as missing."""
+    page = AsyncMock()
+    page.query_selector = AsyncMock(return_value=None)
+
+    result = await parse_product_availability(page)
+
+    assert result["missing"] is True
+    assert result["in_stock"] is False
+
+
+@pytest.mark.asyncio
+async def test_parse_product_availability_selected_variant_out_of_stock() -> None:
+    """Selecting an OOS variant marks the product unavailable even if others are in stock."""
+    page = _mock_product_page(
+        product_class="product type-product instock product-type-variable",
+        name="Fresh Carrots",
+        stock_text=None,
+        og_availability="in stock",
+        variations_json=_VARIATIONS_JSON,
+        variation_id="54914",
+    )
+
+    result = await parse_product_availability(page)
+
+    assert result["in_stock"] is False
+    assert result["is_variable"] is True

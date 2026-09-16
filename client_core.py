@@ -22,6 +22,7 @@ from playwright.async_api import (
     BrowserContext,
     Page,
     Playwright,
+    TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
 
@@ -31,8 +32,10 @@ from tuma250_mcp.parsing import (
     parse_cart_totals,
     parse_order_detail_item,
     parse_order_row,
+    parse_product_availability,
     parse_product_card,
     parse_product_variations,
+    parse_woocommerce_notices,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,16 +54,19 @@ URLS: dict[str, str] = {
 }
 
 SELECTORS: dict[str, str] = {
-    # Login form — confirmed from live DOM (WooCommerce 10.5.2 + Flatsome theme)
-    "login_username": "#username",
-    "login_password": "#password",
-    "login_submit": "button[name='login']",
-    # Present only when authenticated — the Flatsome theme does not render
-    # the standard .woocommerce-MyAccount-navigation element. Instead we check
-    # for the customer-logout link, which only appears for logged-in users.
+    # Login form — scoped to the WooCommerce form so header/Google widgets
+    # with duplicate ids cannot steal fill/click (Flatsome + social login).
+    "login_username": "form.woocommerce-form-login #username",
+    "login_password": "form.woocommerce-form-login #password",
+    "login_submit": "form.woocommerce-form-login button[name='login']",
+    "login_remember": "form.woocommerce-form-login #rememberme",
+    "login_error": ".woocommerce-error",
+    # Flatsome does not render .woocommerce-MyAccount-navigation; the
+    # customer-logout link only appears for authenticated users.
     "login_success_indicator": "a[href*='customer-logout']",
-    # Product search results — Flatsome theme uses div.product-small, not li.product
-    "product_card": "div.product-small",
+    # Product search results — Flatsome nests a decorative div.product-small.box
+    # inside each card; type-product is only on the real card.
+    "product_card": "div.product-small.type-product",
     # Cart — standard WooCommerce table classes
     "cart_item_row": "tr.woocommerce-cart-form__cart-item",
     "cart_total_price": ".order-total .woocommerce-Price-amount",
@@ -168,7 +174,8 @@ class Tuma250Client:
         variation_id: str | None = None
         if var_el:
             raw = await var_el.get_attribute("value")
-            if raw and raw.isdigit():
+            # WooCommerce uses value="0" when no variant is selected.
+            if raw and raw.isdigit() and raw != "0":
                 variation_id = raw
         return (product_id, variation_id)
 
@@ -186,6 +193,21 @@ class Tuma250Client:
             await self._context.storage_state(path=self._settings.session_file)
             logger.debug("Session saved to %s", self._settings.session_file)
 
+    async def _wait_for_login_page_state(self) -> None:
+        """Wait until the logout link or the login form is present."""
+        await self.page.wait_for_selector(
+            f"{SELECTORS['login_success_indicator']}, {SELECTORS['login_username']}",
+            timeout=15_000,
+        )
+
+    async def _login_error_text(self) -> str | None:
+        """Return WooCommerce login error text if the notice is on the page."""
+        el = await self.page.query_selector(SELECTORS["login_error"])
+        if not el:
+            return None
+        text = (await el.inner_text()).strip()
+        return text or None
+
     async def _is_logged_in(self) -> bool:
         """
         Check whether the current session is authenticated.
@@ -194,6 +216,10 @@ class Tuma250Client:
             bool: True if the logout link is present (user is authenticated).
         """
         await self.page.goto(self._url("login"))
+        try:
+            await self._wait_for_login_page_state()
+        except PlaywrightTimeoutError:
+            return False
         el = await self.page.query_selector(SELECTORS["login_success_indicator"])
         return el is not None
 
@@ -213,13 +239,33 @@ class Tuma250Client:
             return
 
         logger.info("Logging in as %s …", self._settings.username)
+        # Reload so we submit against a fresh WooCommerce login nonce.
         await self.page.goto(self._url("login"))
+        await self._wait_for_login_page_state()
         await self.page.fill(SELECTORS["login_username"], self._settings.username)
         await self.page.fill(SELECTORS["login_password"], self._settings.password)
+        if await self.page.query_selector(SELECTORS["login_remember"]):
+            await self.page.check(SELECTORS["login_remember"])
         await self.page.click(SELECTORS["login_submit"])
-        await self.page.wait_for_load_state("networkidle")
 
-        if not await self._is_logged_in():
+        # WooCommerce pages often never reach networkidle (analytics/chat).
+        # Wait for the dashboard nav or a login error instead.
+        try:
+            await self.page.wait_for_selector(
+                f"{SELECTORS['login_success_indicator']}, {SELECTORS['login_error']}",
+                timeout=20_000,
+            )
+        except PlaywrightTimeoutError as exc:
+            raise RuntimeError(
+                "Login did not complete (no logout link or error message). "
+                "The site may have changed or is blocking automated login."
+            ) from exc
+
+        error_text = await self._login_error_text()
+        if error_text:
+            raise RuntimeError(f"Login failed: {error_text}")
+
+        if not await self.page.query_selector(SELECTORS["login_success_indicator"]):
             raise RuntimeError(
                 "Login failed. Check TUMA250_USERNAME / TUMA250_PASSWORD and the login selectors."
             )
@@ -238,7 +284,8 @@ class Tuma250Client:
             max_results (int): Maximum number of results to return.
 
         Returns:
-            list[dict[str, Any]]: List of parsed product dicts.
+            list[dict[str, Any]]: List of parsed product dicts, including
+            ``in_stock`` so callers can skip unavailable items.
         """
         await self.ensure_logged_in()
         url = self._url("search", query=query.replace(" ", "+"))
@@ -305,7 +352,8 @@ class Tuma250Client:
                 pairs for variable products, e.g. {"attribute_quantity": "500g"}.
 
         Returns:
-            dict[str, Any]: Summary with success flag and updated cart state.
+            dict[str, Any]: Summary with success flag, error/message on
+            failure, and updated cart state.
         """
         await self.ensure_logged_in()
 
@@ -324,12 +372,56 @@ class Tuma250Client:
         await self.page.goto(product_url)
         await self.page.wait_for_load_state("networkidle")
 
-        product_id, variation_id = await self._extract_ids_from_product_page()
+        availability = await parse_product_availability(self.page)
+        product_name = availability.get("name") or product_slug
+
+        if availability.get("missing"):
+            return self._add_to_cart_result(
+                success=False,
+                error="product_not_found",
+                message=(
+                    f"Could not find product {product_slug!r}. "
+                    "Check the slug from search_products."
+                ),
+            )
+
+        if not availability.get("in_stock", True):
+            return self._add_to_cart_result(
+                success=False,
+                error="out_of_stock",
+                message=f"{product_name} is currently out of stock.",
+            )
+
+        try:
+            product_id, variation_id = await self._extract_ids_from_product_page()
+        except ValueError as exc:
+            return self._add_to_cart_result(
+                success=False,
+                error="product_not_found",
+                message=str(exc),
+            )
         logger.debug(
             "Extracted product_id=%s variation_id=%s from product page",
             product_id,
             variation_id,
         )
+
+        if availability.get("is_variable") and not variation_id:
+            if variation_attributes:
+                message = (
+                    f"Could not match variation_attributes on {product_name}. "
+                    "Call get_product_variations and pass raw_attributes."
+                )
+            else:
+                message = (
+                    f"{product_name} has size/weight options that must be selected. "
+                    "Call get_product_variations and pass variation_attributes."
+                )
+            return self._add_to_cart_result(
+                success=False,
+                error="variation_required",
+                message=message,
+            )
 
         params = f"add-to-cart={product_id}&quantity={quantity}"
         if variation_id:
@@ -342,13 +434,63 @@ class Tuma250Client:
         await self.page.goto(add_url)
         await self.page.wait_for_load_state("networkidle")
 
+        notices = await parse_woocommerce_notices(self.page)
         cart = await self.get_cart()
         item_ids = [item["product_id"] for item in cart.get("items", [])]
         target_id = variation_id or product_id
         success = str(target_id) in item_ids or str(product_id) in item_ids
 
+        if success:
+            return self._add_to_cart_result(success=True, cart=cart)
+
+        notice_text = next(
+            (n["text"] for n in notices if n.get("type") == "error"),
+            notices[0]["text"] if notices else None,
+        )
+        if notice_text:
+            return self._add_to_cart_result(
+                success=False,
+                cart=cart,
+                error=self._classify_cart_notice(notice_text),
+                message=notice_text,
+            )
+
+        return self._add_to_cart_result(
+            success=False,
+            cart=cart,
+            error="add_failed",
+            message=f"{product_name} was not added to the cart.",
+        )
+
+    @staticmethod
+    def _classify_cart_notice(text: str) -> str:
+        """Map WooCommerce notice text to a stable error code."""
+        lowered = text.lower()
+        if "out of stock" in lowered:
+            return "out_of_stock"
+        if "choose product options" in lowered:
+            return "variation_required"
+        return "add_failed"
+
+    @staticmethod
+    def _add_to_cart_result(
+        *,
+        success: bool,
+        cart: dict[str, Any] | None = None,
+        error: str | None = None,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        cart = cart or {
+            "items": [],
+            "total_items": 0,
+            "subtotal": None,
+            "shipping_options": [],
+            "total": None,
+        }
         return {
             "success": success,
+            "error": error,
+            "message": message,
             "cart_total_items": cart.get("total_items", 0),
             "subtotal": cart.get("subtotal"),
             "shipping_options": cart.get("shipping_options", []),
