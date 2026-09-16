@@ -195,8 +195,11 @@ class Tuma250Client:
 
     async def _wait_for_login_page_state(self) -> None:
         """Wait until the logout link or the login form is present."""
+        # state="attached": Flatsome renders a hidden mobile-menu duplicate of
+        # the logout link first, so the default "visible" state never settles.
         await self.page.wait_for_selector(
             f"{SELECTORS['login_success_indicator']}, {SELECTORS['login_username']}",
+            state="attached",
             timeout=15_000,
         )
 
@@ -253,6 +256,7 @@ class Tuma250Client:
         try:
             await self.page.wait_for_selector(
                 f"{SELECTORS['login_success_indicator']}, {SELECTORS['login_error']}",
+                state="attached",
                 timeout=20_000,
             )
         except PlaywrightTimeoutError as exc:

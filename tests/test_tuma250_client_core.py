@@ -150,6 +150,27 @@ async def test_ensure_logged_in_raises_on_timeout() -> None:
             await client.ensure_logged_in()
 
 
+@pytest.mark.asyncio
+async def test_login_waits_for_attached_not_visible() -> None:
+    """Flatsome hides a duplicate logout link, so waits must not require visibility."""
+    client = _make_client()
+    client._page.wait_for_selector = AsyncMock()
+    client._page.check = AsyncMock()
+    client._page.query_selector = _login_query_selector()
+
+    with (
+        patch.object(
+            client, "_is_logged_in", new_callable=AsyncMock, return_value=False
+        ),
+        patch.object(client, "_save_session", new_callable=AsyncMock),
+    ):
+        await client.ensure_logged_in()
+
+    assert client._page.wait_for_selector.await_args_list
+    for call in client._page.wait_for_selector.await_args_list:
+        assert call.kwargs["state"] == "attached"
+
+
 # ---------------------------------------------------------------------------
 # search_products
 # ---------------------------------------------------------------------------
